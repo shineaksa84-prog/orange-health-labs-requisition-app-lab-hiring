@@ -26,7 +26,25 @@ import { isDateInCurrentMonth, matchesDatePreset } from '../utils/dateUtils';
 
 const STORAGE_KEY_REQUISITIONS = 'orange_health_requisitions_cache_v2';
 
+export function sanitizeFirestorePayload(obj: any): any {
+  if (obj === undefined || obj === null) {
+    return null;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeFirestorePayload(item));
+  }
+  if (typeof obj === 'object') {
+    const result: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = value === undefined ? null : sanitizeFirestorePayload(value);
+    }
+    return result;
+  }
+  return obj;
+}
+
 function getLocalRequisitions(): Requisition[] {
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY_REQUISITIONS);
     if (raw) {
@@ -251,12 +269,13 @@ export class RequisitionService {
     const current = getLocalRequisitions();
     saveLocalRequisitions([newRequisition, ...current]);
 
-    // 2. Attempt Firestore sync without undefined fields
+    // 2. Attempt Firestore sync with fully sanitized payload (no undefined values)
     try {
-      const sanitized = JSON.parse(JSON.stringify(newRequisition));
+      const sanitized = sanitizeFirestorePayload(newRequisition);
       await setDoc(doc(db, 'requisitions', id), sanitized);
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Firestore requisition sync notice (persisted in local cache):', err);
+      // If error is permission or offline, we still return successfully from local persistence
     }
 
     return newRequisition;
@@ -301,9 +320,9 @@ export class RequisitionService {
     const updatedList = list.map(r => r.id === id ? updatedRequisition : r);
     saveLocalRequisitions(updatedList);
 
-    // Attempt Firestore sync
+    // Attempt Firestore sync with sanitized payload
     try {
-      const sanitized = JSON.parse(JSON.stringify(updatedRequisition));
+      const sanitized = sanitizeFirestorePayload(updatedRequisition);
       await setDoc(doc(db, 'requisitions', id), sanitized, { merge: true });
     } catch (err) {
       console.warn('Firestore update sync notice (persisted in local cache):', err);
@@ -311,6 +330,7 @@ export class RequisitionService {
 
     return updatedRequisition;
   }
+
 
 
   /**

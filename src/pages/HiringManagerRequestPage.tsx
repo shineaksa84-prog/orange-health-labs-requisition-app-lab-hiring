@@ -220,14 +220,15 @@ export const HiringManagerRequestPage: React.FC = () => {
         taOwnerName: user?.name || 'Talent Acquisition Team',
         taOwnerEmail: user?.email || 'ta@orangehealth.in',
         hiringManager: hiringManagerName.trim(),
-        hiringManagerEmail: hiringManagerEmail.trim() || undefined,
-        notes: notes.trim() || undefined,
+        hiringManagerEmail: hiringManagerEmail.trim() || null,
+        notes: notes.trim() || null,
         roles: formattedRoles,
         createdBy: user?.id || 'hiring-manager',
         createdByName: hiringManagerName.trim(),
         updatedBy: user?.id || 'hiring-manager',
         updatedByName: hiringManagerName.trim()
-      });
+      } as any);
+
 
       setSubmittedRequisition(created);
       toast.success(

@@ -230,7 +230,7 @@ export const RequisitionFormModal: React.FC<RequisitionFormModalProps> = ({
           locationId: selectedLoc.id,
           locationName: selectedLoc.name,
           roleOpenDate,
-          targetJoiningDate: targetJoiningDate || undefined,
+          targetJoiningDate: targetJoiningDate || null,
           status,
           priority,
           hiringReason,
@@ -238,12 +238,12 @@ export const RequisitionFormModal: React.FC<RequisitionFormModalProps> = ({
           taOwnerId,
           taOwnerName,
           taOwnerEmail,
-          hiringManager: hiringManager.trim() || undefined,
-          notes: notes.trim() || undefined,
+          hiringManager: hiringManager.trim() || null,
+          notes: notes.trim() || null,
           roles: formattedRoles,
           updatedBy: user?.id || 'anonymous',
           updatedByName: user?.name || 'Team Member'
-        });
+        } as any);
 
         toast.success('Requisition updated', `${updated.requisitionCode} has been updated successfully.`);
         onSuccess(updated);
@@ -254,7 +254,7 @@ export const RequisitionFormModal: React.FC<RequisitionFormModalProps> = ({
           locationId: selectedLoc.id,
           locationName: selectedLoc.name,
           roleOpenDate,
-          targetJoiningDate: targetJoiningDate || undefined,
+          targetJoiningDate: targetJoiningDate || null,
           status,
           priority,
           hiringReason,
@@ -262,14 +262,15 @@ export const RequisitionFormModal: React.FC<RequisitionFormModalProps> = ({
           taOwnerId,
           taOwnerName,
           taOwnerEmail,
-          hiringManager: hiringManager.trim() || undefined,
-          notes: notes.trim() || undefined,
+          hiringManager: hiringManager.trim() || null,
+          notes: notes.trim() || null,
           roles: formattedRoles,
           createdBy: user?.id || 'anonymous',
           createdByName: user?.name || 'Team Member',
           updatedBy: user?.id || 'anonymous',
           updatedByName: user?.name || 'Team Member'
-        });
+        } as any);
+
 
         toast.success('Requisition created', `${created.requisitionCode} has been created successfully.`);
         onSuccess(created);
