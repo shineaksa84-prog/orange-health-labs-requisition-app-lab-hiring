@@ -255,11 +255,33 @@ export class RequisitionService {
     // Automatically calculate total positions from all assigned roles
     const totalPositions = (data.roles || []).reduce((acc, r) => acc + (Number(r.numberOfPositions) || 0), 0);
 
-    const newRequisition: Requisition = {
-      ...data,
+    const cleanRequisition: Requisition = {
       id,
       requisitionCode: code,
+      locationId: data.locationId || 'BLR1',
+      locationName: data.locationName || 'BLR 1',
+      roleOpenDate: data.roleOpenDate || now.slice(0, 10),
+      targetJoiningDate: data.targetJoiningDate || null,
+      status: data.status || 'Open',
+      priority: data.priority || 'Standard',
+      hiringReason: data.hiringReason || 'Expansion',
+      department: data.department || 'Clinical Pathology & Hematology',
+      taOwnerId: data.taOwnerId || 'unassigned',
+      taOwnerName: data.taOwnerName || 'Talent Acquisition Team',
+      taOwnerEmail: data.taOwnerEmail || 'ta@orangehealth.in',
+      hiringManager: data.hiringManager || '',
+      hiringManagerEmail: data.hiringManagerEmail || null,
+      notes: data.notes || '',
       totalPositions,
+      roles: (data.roles || []).map(r => ({
+        roleId: r.roleId,
+        roleName: r.roleName,
+        numberOfPositions: Number(r.numberOfPositions) || 1,
+      })),
+      createdBy: data.createdBy || 'anonymous',
+      createdByName: data.createdByName || 'Team Member',
+      updatedBy: data.updatedBy || 'anonymous',
+      updatedByName: data.updatedByName || 'Team Member',
       createdAt: now,
       updatedAt: now,
       closedAt: data.status === 'Closed' ? now : null
@@ -267,18 +289,17 @@ export class RequisitionService {
 
     // 1. Immediately save to persistent local cache
     const current = getLocalRequisitions();
-    saveLocalRequisitions([newRequisition, ...current]);
+    saveLocalRequisitions([cleanRequisition, ...current]);
 
-    // 2. Attempt Firestore sync with fully sanitized payload (no undefined values)
+    // 2. Attempt Firestore sync with fully sanitized payload
     try {
-      const sanitized = sanitizeFirestorePayload(newRequisition);
+      const sanitized = sanitizeFirestorePayload(cleanRequisition);
       await setDoc(doc(db, 'requisitions', id), sanitized);
     } catch (err: any) {
       console.warn('Firestore requisition sync notice (persisted in local cache):', err);
-      // If error is permission or offline, we still return successfully from local persistence
     }
 
-    return newRequisition;
+    return cleanRequisition;
   }
 
   /**
@@ -306,9 +327,12 @@ export class RequisitionService {
       closedAt = null;
     }
 
-    const updatedRequisition: Requisition = {
+    const cleanUpdated: Requisition = {
       ...current,
       ...data,
+      notes: data.notes !== undefined ? (data.notes || '') : (current.notes || ''),
+      hiringManagerEmail: data.hiringManagerEmail !== undefined ? (data.hiringManagerEmail || null) : (current.hiringManagerEmail || null),
+      targetJoiningDate: data.targetJoiningDate !== undefined ? (data.targetJoiningDate || null) : (current.targetJoiningDate || null),
       totalPositions,
       status,
       closedAt,
@@ -317,19 +341,20 @@ export class RequisitionService {
 
     // Update local cache
     const list = getLocalRequisitions();
-    const updatedList = list.map(r => r.id === id ? updatedRequisition : r);
+    const updatedList = list.map(r => r.id === id ? cleanUpdated : r);
     saveLocalRequisitions(updatedList);
 
     // Attempt Firestore sync with sanitized payload
     try {
-      const sanitized = sanitizeFirestorePayload(updatedRequisition);
+      const sanitized = sanitizeFirestorePayload(cleanUpdated);
       await setDoc(doc(db, 'requisitions', id), sanitized, { merge: true });
     } catch (err) {
       console.warn('Firestore update sync notice (persisted in local cache):', err);
     }
 
-    return updatedRequisition;
+    return cleanUpdated;
   }
+
 
 
 
