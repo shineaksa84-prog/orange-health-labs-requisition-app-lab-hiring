@@ -136,27 +136,31 @@ export const ReportsPage: React.FC = () => {
 
   // Location x Designation Staffing Matrix
   const matrixData = useMemo(() => {
-    // Rows: STANDARD_ROLES, Columns: STANDARD_LOCATIONS
+    // Rows: role names, Columns: location names
     const matrix: Record<string, Record<string, { open: number; total: number }>> = {};
     
-    STANDARD_ROLES.forEach(role => {
-      matrix[role] = {};
-      STANDARD_LOCATIONS.forEach(loc => {
-        matrix[role][loc] = { open: 0, total: 0 };
+    STANDARD_ROLES.forEach(r => {
+      matrix[r.name] = {};
+      STANDARD_LOCATIONS.forEach(l => {
+        matrix[r.name][l.name] = { open: 0, total: 0 };
       });
     });
 
-    requisitions.forEach(r => {
-      const role = r.roleName;
-      const loc = r.labLocation;
-      const count = r.numberOfPositions || 1;
-      
-      if (matrix[role] && matrix[role][loc]) {
-        matrix[role][loc].total += count;
-        if (r.status === 'Open') {
-          matrix[role][loc].open += count;
+    requisitions.forEach(req => {
+      const locName = req.locationName || req.locationId;
+      const rolesList = req.roles || [];
+
+      rolesList.forEach(roleItem => {
+        const rName = roleItem.roleName;
+        const count = Number(roleItem.numberOfPositions) || 1;
+        
+        if (matrix[rName] && matrix[rName][locName]) {
+          matrix[rName][locName].total += count;
+          if (req.status === 'Open') {
+            matrix[rName][locName].open += count;
+          }
         }
-      }
+      });
     });
 
     return matrix;
@@ -165,16 +169,16 @@ export const ReportsPage: React.FC = () => {
   // Totals per column (Location)
   const locationTotals = useMemo(() => {
     const totals: Record<string, { open: number; total: number }> = {};
-    STANDARD_LOCATIONS.forEach(loc => {
+    STANDARD_LOCATIONS.forEach(l => {
       let open = 0;
       let total = 0;
-      STANDARD_ROLES.forEach(role => {
-        if (matrixData[role] && matrixData[role][loc]) {
-          open += matrixData[role][loc].open;
-          total += matrixData[role][loc].total;
+      STANDARD_ROLES.forEach(r => {
+        if (matrixData[r.name] && matrixData[r.name][l.name]) {
+          open += matrixData[r.name][l.name].open;
+          total += matrixData[r.name][l.name].total;
         }
       });
-      totals[loc] = { open, total };
+      totals[l.name] = { open, total };
     });
     return totals;
   }, [matrixData]);
@@ -183,10 +187,10 @@ export const ReportsPage: React.FC = () => {
   const topDemandLocation = useMemo(() => {
     let max = 0;
     let name = 'None';
-    Object.entries(locationTotals).forEach(([loc, data]) => {
+    Object.entries(locationTotals).forEach(([locName, data]) => {
       if (data.open > max) {
         max = data.open;
-        name = loc;
+        name = locName;
       }
     });
     return { name, count: max };
@@ -195,16 +199,16 @@ export const ReportsPage: React.FC = () => {
   const topDemandRole = useMemo(() => {
     let max = 0;
     let name = 'None';
-    STANDARD_ROLES.forEach(role => {
+    STANDARD_ROLES.forEach(r => {
       let open = 0;
-      STANDARD_LOCATIONS.forEach(loc => {
-        if (matrixData[role] && matrixData[role][loc]) {
-          open += matrixData[role][loc].open;
+      STANDARD_LOCATIONS.forEach(l => {
+        if (matrixData[r.name] && matrixData[r.name][l.name]) {
+          open += matrixData[r.name][l.name].open;
         }
       });
       if (open > max) {
         max = open;
-        name = role;
+        name = r.name;
       }
     });
     return { name, count: max };
@@ -213,11 +217,11 @@ export const ReportsPage: React.FC = () => {
   // Filtered requisitions for roster table
   const filteredRequisitions = useMemo(() => {
     return requisitions.filter(r => {
-      const matchLoc = selectedLocation === 'All' || r.labLocation === selectedLocation;
+      const matchLoc = selectedLocation === 'All' || r.locationName === selectedLocation || r.locationId === selectedLocation;
       const matchStatus = selectedStatus === 'All' || r.status === selectedStatus;
       const matchSearch = searchTerm === '' || 
-        r.requisitionId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.roleName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.requisitionCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.roles?.some(role => role.roleName.toLowerCase().includes(searchTerm.toLowerCase())) ||
         r.hiringManager?.toLowerCase().includes(searchTerm.toLowerCase());
       return matchLoc && matchStatus && matchSearch;
     });
@@ -232,24 +236,24 @@ export const ReportsPage: React.FC = () => {
   ].filter(d => d.count > 0);
 
   // Chart Data: Open Headcount by Location
-  const locationBarData = STANDARD_LOCATIONS.map(loc => ({
-    name: loc,
-    openHeadcount: locationTotals[loc]?.open || 0,
-    totalHeadcount: locationTotals[loc]?.total || 0,
+  const locationBarData = STANDARD_LOCATIONS.map(l => ({
+    name: l.name,
+    openHeadcount: locationTotals[l.name]?.open || 0,
+    totalHeadcount: locationTotals[l.name]?.total || 0,
   }));
 
   // Chart Data: Open Headcount by Role
-  const roleBarData = STANDARD_ROLES.map(role => {
+  const roleBarData = STANDARD_ROLES.map(r => {
     let open = 0;
     let total = 0;
-    STANDARD_LOCATIONS.forEach(loc => {
-      if (matrixData[role] && matrixData[role][loc]) {
-        open += matrixData[role][loc].open;
-        total += matrixData[role][loc].total;
+    STANDARD_LOCATIONS.forEach(l => {
+      if (matrixData[r.name] && matrixData[r.name][l.name]) {
+        open += matrixData[r.name][l.name].open;
+        total += matrixData[r.name][l.name].total;
       }
     });
     return {
-      roleName: role,
+      roleName: r.name,
       openHeadcount: open,
       totalHeadcount: total,
     };
@@ -262,6 +266,7 @@ export const ReportsPage: React.FC = () => {
     { range: '15-30 Days', count: agingBuckets.warning, color: '#F59E0B', label: 'Aging Warning' },
     { range: '30+ Days', count: agingBuckets.critical, color: '#EF4444', label: 'Critical SLA' },
   ];
+
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
@@ -472,31 +477,31 @@ export const ReportsPage: React.FC = () => {
                 <thead>
                   <tr className="bg-neutral-50 text-neutral-600 font-bold border-b border-neutral-200">
                     <th className="py-3 px-3.5 rounded-l-xl">Role / Designation</th>
-                    {STANDARD_LOCATIONS.map(loc => (
-                      <th key={loc} className="py-3 px-2.5 text-center font-bold text-neutral-800">
-                        {loc}
+                    {STANDARD_LOCATIONS.map(l => (
+                      <th key={l.id} className="py-3 px-2.5 text-center font-bold text-neutral-800">
+                        {l.name}
                       </th>
                     ))}
                     <th className="py-3 px-3.5 text-right font-black text-[#FF6B00] rounded-r-xl">Total Open</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
-                  {STANDARD_ROLES.map(role => {
+                  {STANDARD_ROLES.map(r => {
                     let roleOpenTotal = 0;
-                    STANDARD_LOCATIONS.forEach(loc => {
-                      roleOpenTotal += matrixData[role]?.[loc]?.open || 0;
+                    STANDARD_LOCATIONS.forEach(l => {
+                      roleOpenTotal += matrixData[r.name]?.[l.name]?.open || 0;
                     });
 
                     return (
-                      <tr key={role} className="hover:bg-orange-50/30 transition-colors">
+                      <tr key={r.id} className="hover:bg-orange-50/30 transition-colors">
                         <td className="py-3 px-3.5 font-bold text-neutral-900 flex items-center gap-2">
                           <Briefcase className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                          {role}
+                          {r.name}
                         </td>
-                        {STANDARD_LOCATIONS.map(loc => {
-                          const openCount = matrixData[role]?.[loc]?.open || 0;
+                        {STANDARD_LOCATIONS.map(l => {
+                          const openCount = matrixData[r.name]?.[l.name]?.open || 0;
                           return (
-                            <td key={loc} className="py-2.5 px-2.5 text-center">
+                            <td key={l.id} className="py-2.5 px-2.5 text-center">
                               {openCount > 0 ? (
                                 <span className="inline-flex items-center justify-center min-w-[28px] h-7 px-2 rounded-lg bg-orange-100 text-[#FF6B00] font-black text-xs border border-orange-200">
                                   {openCount}
@@ -519,9 +524,9 @@ export const ReportsPage: React.FC = () => {
                     <td className="py-3 px-3.5 rounded-l-xl font-black uppercase tracking-wider text-xs">
                       Hub Open Totals
                     </td>
-                    {STANDARD_LOCATIONS.map(loc => (
-                      <td key={loc} className="py-3 px-2.5 text-center font-black text-amber-400">
-                        {locationTotals[loc]?.open || 0}
+                    {STANDARD_LOCATIONS.map(l => (
+                      <td key={l.id} className="py-3 px-2.5 text-center font-black text-amber-400">
+                        {locationTotals[l.name]?.open || 0}
                       </td>
                     ))}
                     <td className="py-3 px-3.5 text-right font-black text-base text-amber-400 rounded-r-xl">
@@ -722,7 +727,7 @@ export const ReportsPage: React.FC = () => {
                 >
                   <option value="All">All Locations</option>
                   {STANDARD_LOCATIONS.map(loc => (
-                    <option key={loc} value={loc}>{loc}</option>
+                    <option key={loc.id} value={loc.name}>{loc.name}</option>
                   ))}
                 </select>
 
@@ -777,22 +782,25 @@ export const ReportsPage: React.FC = () => {
                       if (r.status === 'On Hold') statusBadge = 'bg-amber-50 text-amber-700 border-amber-200';
                       if (r.status === 'Cancelled') statusBadge = 'bg-red-50 text-red-700 border-red-200';
 
+                      const rolesSummary = (r.roles || []).map(item => `${item.roleName} (${item.numberOfPositions})`).join(', ') || 'Staffing Requisition';
+                      const posCount = r.totalPositions || (r.roles || []).reduce((sum, item) => sum + (item.numberOfPositions || 0), 0) || 1;
+
                       return (
                         <tr key={r.id} className="hover:bg-neutral-50/80 transition-colors">
                           <td className="py-2.5 px-3 font-mono font-bold text-[#FF6B00]">
-                            {r.requisitionId || r.id.substring(0, 8)}
+                            {r.requisitionCode || r.id.substring(0, 8)}
                           </td>
                           <td className="py-2.5 px-3 font-bold text-neutral-800">
-                            {r.labLocation}
+                            {r.locationName || r.locationId}
                           </td>
-                          <td className="py-2.5 px-3 font-semibold text-neutral-900">
-                            {r.roleName}
+                          <td className="py-2.5 px-3 font-semibold text-neutral-900 max-w-xs truncate" title={rolesSummary}>
+                            {rolesSummary}
                           </td>
                           <td className="py-2.5 px-3 text-neutral-600">
-                            {r.hiringManager}
+                            {r.hiringManager || 'Hiring Manager'}
                           </td>
                           <td className="py-2.5 px-3 text-center font-bold text-neutral-900">
-                            {r.numberOfPositions || 1}
+                            {posCount}
                           </td>
                           <td className="py-2.5 px-3 text-neutral-500">
                             {r.roleOpenDate || new Date(r.createdAt).toLocaleDateString()}
@@ -825,4 +833,5 @@ export const ReportsPage: React.FC = () => {
     </div>
   );
 };
+
 

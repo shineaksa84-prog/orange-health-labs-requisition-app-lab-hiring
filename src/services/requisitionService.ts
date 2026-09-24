@@ -24,6 +24,28 @@ import {
 import { STANDARD_LOCATIONS, STANDARD_ROLES, initializeFirestoreMasters } from './masterDataInit';
 import { isDateInCurrentMonth, matchesDatePreset } from '../utils/dateUtils';
 
+const STORAGE_KEY_REQUISITIONS = 'orange_health_requisitions_cache_v2';
+
+function getLocalRequisitions(): Requisition[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_REQUISITIONS);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.warn('Error reading local requisitions cache:', e);
+  }
+  return [];
+}
+
+function saveLocalRequisitions(list: Requisition[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_REQUISITIONS, JSON.stringify(list));
+  } catch (e) {
+    console.warn('Error writing local requisitions cache:', e);
+  }
+}
+
 export class RequisitionService {
   /**
    * Fetch all locations (fixed master)
@@ -34,11 +56,11 @@ export class RequisitionService {
       if (!snap.empty) {
         return snap.docs.map(d => ({ id: d.id, ...d.data() } as LocationMaster));
       }
-      // If empty, initialize standard masters in Firestore
-      await initializeFirestoreMasters();
+      // If empty, attempt to initialize standard masters in Firestore
+      initializeFirestoreMasters().catch(() => {});
       return STANDARD_LOCATIONS;
     } catch (e) {
-      console.warn('Firestore getLocations error:', e);
+      console.warn('Firestore getLocations notice (using standard locations):', e);
       return STANDARD_LOCATIONS;
     }
   }
@@ -52,10 +74,10 @@ export class RequisitionService {
       if (!snap.empty) {
         return snap.docs.map(d => ({ id: d.id, ...d.data() } as RoleMaster));
       }
-      await initializeFirestoreMasters();
+      initializeFirestoreMasters().catch(() => {});
       return STANDARD_ROLES;
     } catch (e) {
-      console.warn('Firestore getRoles error:', e);
+      console.warn('Firestore getRoles notice (using standard roles):', e);
       return STANDARD_ROLES;
     }
   }
@@ -71,13 +93,13 @@ export class RequisitionService {
       }
       return [];
     } catch (e) {
-      console.warn('Firestore getUsers error:', e);
+      console.warn('Firestore getUsers notice:', e);
       return [];
     }
   }
 
   /**
-   * Generate next requisition code: LAB-YYYY-XXX atomically via Firestore
+   * Generate next requisition code: LAB-YYYY-XXX atomically
    */
   static async generateNextRequisitionCode(): Promise<string> {
     const year = new Date().getFullYear();
@@ -103,23 +125,30 @@ export class RequisitionService {
   }
 
   /**
-   * Get all requisitions from Firestore
+   * Get all requisitions (Firestore + Local fallback merge)
    */
   static async getAllRequisitions(): Promise<Requisition[]> {
+    const local = getLocalRequisitions();
     try {
       const q = query(collection(db, 'requisitions'), orderBy('createdAt', 'desc'));
       const snap = await getDocs(q);
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Requisition));
+      const remoteList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Requisition));
+      
+      // Merge remote and local (remote takes precedence by id)
+      const map = new Map<string, Requisition>();
+      local.forEach(r => map.set(r.id, r));
+      remoteList.forEach(r => map.set(r.id, r));
+      
+      const merged = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      saveLocalRequisitions(merged);
+      return merged;
     } catch (e) {
-      console.warn('Firestore getAllRequisitions error:', e);
-      // Fallback query without orderBy in case composite index is still building
-      try {
-        const snap = await getDocs(collection(db, 'requisitions'));
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Requisition));
-        return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      } catch {
-        return [];
-      }
+      console.warn('Firestore offline/fallback for getAllRequisitions:', e);
+      return local.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
     }
   }
 
@@ -127,20 +156,8 @@ export class RequisitionService {
    * Get single requisition by ID
    */
   static async getRequisitionById(id: string): Promise<Requisition | null> {
-    try {
-      const docRef = doc(db, 'requisitions', id);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        return { id: snap.id, ...snap.data() } as Requisition;
-      }
-      
-      // Try searching by requisitionCode
-      const all = await this.getAllRequisitions();
-      return all.find(r => r.id === id || r.requisitionCode === id) || null;
-    } catch (e) {
-      console.warn('Firestore getRequisitionById error:', e);
-      return null;
-    }
+    const all = await this.getAllRequisitions();
+    return all.find(r => r.id === id || r.requisitionCode === id) || null;
   }
 
   /**
@@ -208,7 +225,7 @@ export class RequisitionService {
   }
 
   /**
-   * Create a new requisition in Firestore
+   * Create a new requisition (Saves locally + Firestore sync)
    */
   static async createRequisition(
     data: Omit<Requisition, 'id' | 'requisitionCode' | 'createdAt' | 'updatedAt' | 'totalPositions'> & { requisitionCode?: string }
@@ -218,7 +235,7 @@ export class RequisitionService {
     const now = new Date().toISOString();
     
     // Automatically calculate total positions from all assigned roles
-    const totalPositions = data.roles.reduce((acc, r) => acc + (Number(r.numberOfPositions) || 0), 0);
+    const totalPositions = (data.roles || []).reduce((acc, r) => acc + (Number(r.numberOfPositions) || 0), 0);
 
     const newRequisition: Requisition = {
       ...data,
@@ -230,12 +247,23 @@ export class RequisitionService {
       closedAt: data.status === 'Closed' ? now : null
     };
 
-    await setDoc(doc(db, 'requisitions', id), newRequisition);
+    // 1. Immediately save to persistent local cache
+    const current = getLocalRequisitions();
+    saveLocalRequisitions([newRequisition, ...current]);
+
+    // 2. Attempt Firestore sync without undefined fields
+    try {
+      const sanitized = JSON.parse(JSON.stringify(newRequisition));
+      await setDoc(doc(db, 'requisitions', id), sanitized);
+    } catch (err) {
+      console.warn('Firestore requisition sync notice (persisted in local cache):', err);
+    }
+
     return newRequisition;
   }
 
   /**
-   * Update an existing requisition in Firestore
+   * Update an existing requisition
    */
   static async updateRequisition(
     id: string,
@@ -248,7 +276,7 @@ export class RequisitionService {
       throw new Error(`Requisition with id ${id} not found`);
     }
 
-    const roles = data.roles || current.roles;
+    const roles = data.roles || current.roles || [];
     const totalPositions = roles.reduce((acc, r) => acc + (Number(r.numberOfPositions) || 0), 0);
     
     const status = data.status || current.status;
@@ -268,9 +296,22 @@ export class RequisitionService {
       updatedAt: now
     };
 
-    await updateDoc(doc(db, 'requisitions', id), updatedRequisition as any);
+    // Update local cache
+    const list = getLocalRequisitions();
+    const updatedList = list.map(r => r.id === id ? updatedRequisition : r);
+    saveLocalRequisitions(updatedList);
+
+    // Attempt Firestore sync
+    try {
+      const sanitized = JSON.parse(JSON.stringify(updatedRequisition));
+      await setDoc(doc(db, 'requisitions', id), sanitized, { merge: true });
+    } catch (err) {
+      console.warn('Firestore update sync notice (persisted in local cache):', err);
+    }
+
     return updatedRequisition;
   }
+
 
   /**
    * Quick status change helper in Firestore
